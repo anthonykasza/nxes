@@ -121,10 +121,12 @@ event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count)
 	# cehck to see if the connection contain a DNS query that resulted in an NXDomain response
 	if ( (c?$dns) && (c$dns?$query) && (msg$rcode == 3) ) 
 	{
-		local tld: table[count] of string = tldr(c$dns$query);
-		
+		local q: table[count] of string = tldr(c$dns$query);
+		local tld: string = q[ |q| ];
+		local domain: string = q[ |q| - 1];		
+
 		# check to see if the TLD of the domain is interesting or not
-		if (tld[|tld|-1] !in tld_blacklist)
+		if (tld !in tld_blacklist)
 		{
 			local is_this_a_typo: bool = F;
 		
@@ -147,18 +149,16 @@ event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count)
 			# if the query wasn't a typo, build an Nxes::Info records and log stuff
 			if (!is_this_a_typo)
 			{
-				local domain: string = tld[ |tld| - 2 ];
 				local domain_uniq_chars: set[string] = gramer(domain, 1);
 				local domain_grams: set[string] = gramer(domain, gram_size);
 				local domain_entropy: entropy_test_result = find_entropy(domain);
-	
 				Log::write(Nxes::LOG, [$uid = c$uid,
 						       $query = c$dns$query,
 						       $qtype = c$dns$qtype,
 						       $qtype_name = c$dns$qtype_name,
 						       $qlen = |c$dns$query|,
-						       $levels = |tld|,
-						       $tld = tld[|tld| - 1],
+						       $levels = |q|,
+						       $tld = tld,
 						       $domain = domain,
 						       $domain_qchar_c = |domain|,
 						       $domain_grams_c = |domain_grams|,
