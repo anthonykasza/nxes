@@ -16,33 +16,29 @@ export {
 	type Info: record {
                 # the Bro unique connection ID string
 		# this string can be used to find more info in the conn.log and dns.log files
-		uid:       	string &log;
+		uid:       		string &log;
 		# the domain being queried in string format
-	        query:       	string &log;
+	        query:       		string &log;
 		# the query type in decimal form
-		qtype: 		count &log;
+		qtype: 			count &log;
 		# the query type's name (not decimal value) e.g. A, AAAA, NS, SOA, TXT, etc.
-		qtype_name:	string &log;
+		qtype_name:		string &log;
 		# the length of the query e.g. bro.org = 7
-		qlen:		count &log;
-		# the unique character count e.g. bro.org = 5
-		# this can also be considered the queried domain's unigram or 1-gram
-		qchar_c:	count &log;
-		# the number of hieracrchical levels in a domain name (measured by counting periods)
-		levels: 	count &log;
+		qlen:			count &log;
+		# the number of hieracrchical levels in a domain name
+		levels: 		count &log;
 		# the top level domain of the query
-		tld:		string &log;
+		tld:			string &log;
+		# the unique character set of the domain (1-grams)
+		domain_qchar_c:		count &log;
+		# the domain of the query. this is optional as query of '.com' is possible
+		domain:			string &log &optional;
 		# the number of unique n-grams in the domain being queried
-		grams_c:	count &log;
+		domain_grams_c:		count &log;
 		# the set of n-grams in the domain name being queried
-		grams:		set[string] &log;
-		# the following values (entropy, chi_square, mean, monte_carlo_pi, and serial_correlation) measure how random a string seems to be
-		# the measurements are calculated with the bif find_entropy - more info can be found here http://www.fourmilab.ch/random/
-		entropy:	double &log;
-		chi_square:	double &log;
-		mean: 		double &log;
-		monte_carlo_pi:	double &log;
-		serial_correlation:	double &log;
+		domain_grams:			set[string] &log;
+		# the entropy of the domain
+		domain_entropy:		double &log;
 	};
 	
 	# logging event for the nxes module
@@ -55,28 +51,37 @@ export {
 	global misspelling_threshold: count = 3 &redef;
 }
 
-# determine the top level domain of a domain name according to the public suffix list
-function tldr(s: string): string
+# breaks a domain into a table of count of strings.
+# the tld of a domain has the highest index
+function tldr(s: string): table[count] of string
 {
-	if ( (/\./ !in s) || (s in suffixes) )
-	{
-		return s;
-	}
+        if ( (/\./ !in s) || (s in suffixes) )
+        {
+                local vs: table[count] of string;
+                 vs[0] = s;
+                return vs;
+        }
 
-	local iter = split(s, /\./);
-	local levels: count = |iter|;
-	local tld: string = s;
+        local iter = split(s, /\./);
+        local levels: count = |iter|;
+        local tld: string = s;
 
-	for ( i in iter )
-	{
-		if ( (tld in suffixes) || (levels == 1) )
-		{
-			return tld;
-		}	
-		--levels;
-		
-		tld = split1(tld, /\./)[2];
-	}
+        for ( i in iter )
+        {
+                if ( (tld in suffixes) || (levels == 1) )
+                {
+                        break;
+                }
+                --levels;
+
+                tld = split1(tld, /\./)[2];
+        }
+
+        local subdomains: string = sub_bytes( s, 0, (|s| - |tld|) );
+        local tmp: table[count]of string = split(subdomains, /\./);
+        tmp[|tmp|] = tld;
+
+        return tmp;
 }
 
 # return a set of unique gsize chunks of s 
@@ -116,10 +121,10 @@ event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count)
 	# cehck to see if the connection contain a DNS query that resulted in an NXDomain response
 	if ( (c?$dns) && (c$dns?$query) && (msg$rcode == 3) ) 
 	{
-		local tld: string = tldr(c$dns$query);
+		local tld: table[count] of string = tldr(c$dns$query);
 		
 		# check to see if the TLD of the domain is interesting or not
-		if (tld !in tld_blacklist)
+		if (tld[|tld|-1] !in tld_blacklist)
 		{
 			local is_this_a_typo: bool = F;
 		
@@ -142,25 +147,23 @@ event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count)
 			# if the query wasn't a typo, build an Nxes::Info records and log stuff
 			if (!is_this_a_typo)
 			{
-				local uniq_chars: set[string] = gramer(c$dns$query, 1);
-				local grams: set[string] = gramer(c$dns$query, gram_size);
-				local e: entropy_test_result = find_entropy(c$dns$query);
+				local domain: string = tld[ |tld| - 2 ];
+				local domain_uniq_chars: set[string] = gramer(domain, 1);
+				local domain_grams: set[string] = gramer(domain, gram_size);
+				local domain_entropy: entropy_test_result = find_entropy(domain);
 	
 				Log::write(Nxes::LOG, [$uid = c$uid,
 						       $query = c$dns$query,
 						       $qtype = c$dns$qtype,
 						       $qtype_name = c$dns$qtype_name,
 						       $qlen = |c$dns$query|,
-						       $qchar_c = |uniq_chars|,
-						       $levels = |split(c$dns$query, /\./)|,
-						       $tld = tld,
-						       $grams_c = |grams|,
-						       $grams = grams,
-						       $entropy =  e$entropy,
-						       $chi_square = e$chi_square,
-						       $mean = e$mean,
-						       $monte_carlo_pi = e$monte_carlo_pi,
-						       $serial_correlation = e$serial_correlation]
+						       $levels = |tld|,
+						       $tld = tld[|tld| - 1],
+						       $domain = domain,
+						       $domain_qchar_c = |domain|,
+						       $domain_grams_c = |domain_grams|,
+						       $domain_grams = domain_grams,
+						       $domain_entropy =  domain_entropy$entropy]
 				);
 			}
 		}
