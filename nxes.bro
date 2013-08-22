@@ -25,7 +25,7 @@ export {
 		qtype_name:		string &log;
 		# the length of the query e.g. bro.org = 7
 		qlen:			count &log;
-		# the number of hieracrchical levels in a domain name
+		# the number of hieracrchical levels in a domain name (includes '.' as root level)
 		levels: 		count &log;
 		# the top level domain of the query
 		tld:			string &log;
@@ -49,16 +49,23 @@ export {
 
 	# string metric threshold for determining misspelled domains
 	global misspelling_threshold: count = 3 &redef;
+
+	# fully qualified domain name type
+	type fqdn: record {
+	        subs: string &optional;
+	        domain: string &optional;
+	        tld: string;
+	};
 }
 
-# breaks a domain into a table of count of strings.
-# the tld of a domain has the highest index
-function tldr(s: string): table[count] of string
+# breaks a domain into a fqdn record
+function tldr(s: string): fqdn
 {
+        local vs: fqdn;
+
         if ( (/\./ !in s) || (s in suffixes) )
         {
-                local vs: table[count] of string;
-                 vs[0] = s;
+                vs$tld = s;
                 return vs;
         }
 
@@ -77,11 +84,14 @@ function tldr(s: string): table[count] of string
                 tld = split1(tld, /\./)[2];
         }
 
-        local subdomains: string = sub_bytes( s, 0, (|s| - |tld|) );
-        local tmp: table[count]of string = split(subdomains, /\./);
-        tmp[|tmp|] = tld;
+        local subs_domain: string = sub_bytes( s, 0, (|s| - |tld|) );
+        local tmp: table[count] of string = split(subs_domain, /\./);
 
-        return tmp;
+        vs$tld = tld;
+        vs$domain = tmp[ |tmp| - 1];
+        vs$subs = sub_bytes( subs_domain, 0, (|subs_domain| - |string_cat(vs$domain, ".")|) );
+
+        return vs;
 }
 
 # return a set of unique gsize chunks of s 
@@ -121,12 +131,10 @@ event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count)
 	# cehck to see if the connection contain a DNS query that resulted in an NXDomain response
 	if ( (c?$dns) && (c$dns?$query) && (msg$rcode == 3) ) 
 	{
-		local q: table[count] of string = tldr(c$dns$query);
-		local tld: string = q[ |q| ];
-		local domain: string = q[ |q| - 1];		
+		local tmp_fqdn: fqdn = tldr(c$dns$query);
 
 		# check to see if the TLD of the domain is interesting or not
-		if (tld !in tld_blacklist)
+		if (tmp_fqdn$tld !in tld_blacklist)
 		{
 			local is_this_a_typo: bool = F;
 		
@@ -149,18 +157,19 @@ event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count)
 			# if the query wasn't a typo, build an Nxes::Info records and log stuff
 			if (!is_this_a_typo)
 			{
-				local domain_uniq_chars: set[string] = gramer(domain, 1);
-				local domain_grams: set[string] = gramer(domain, gram_size);
-				local domain_entropy: entropy_test_result = find_entropy(domain);
+				local domain_uniq_chars: set[string] = gramer(tmp_fqdn$domain, 1);
+				local domain_grams: set[string] = gramer(tmp_fqdn$domain, gram_size);
+				local domain_entropy: entropy_test_result = find_entropy(tmp_fqdn$domain);
 				Log::write(Nxes::LOG, [$uid = c$uid,
 						       $query = c$dns$query,
 						       $qtype = c$dns$qtype,
 						       $qtype_name = c$dns$qtype_name,
 						       $qlen = |c$dns$query|,
-						       $levels = |q|,
-						       $tld = tld,
-						       $domain = domain,
-						       $domain_qchar_c = |domain|,
+						       # count the periods in the subdomains, then add 2 (for domain and tld)
+						       $levels = |split(tmp_fqdn$subs, /\./)| + 2,
+						       $tld = tmp_fqdn$tld,
+						       $domain = tmp_fqdn$domain,
+						       $domain_qchar_c = |tmp_fqdn$domain|,
 						       $domain_grams_c = |domain_grams|,
 						       $domain_grams = domain_grams,
 						       $domain_entropy =  domain_entropy$entropy]
