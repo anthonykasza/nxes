@@ -5,19 +5,17 @@
 @load alexa_top_x
 @load tld_blacklist
 
-# ignore all checksum (makes for nicer VM testing)
-redef ignore_checksums = T;
-
 module Nxes;
 
 export {
 	redef enum Log::ID += { LOG };
 
 	type Info: record {
-                # the Bro unique connection ID string
-		# this string can be used to find more info in the conn.log and dns.log files
+        	# the epoch from the original DNS query
+		ts: 			time &log;
+	        # the Bro unique connection ID string
 		uid:       		string &log;
-		# the domain being queried in string format
+		# the domain being queried
 	        query:       		string &log;
 		# the query type in decimal form
 		qtype: 			count &log;
@@ -25,20 +23,30 @@ export {
 		qtype_name:		string &log;
 		# the length of the query e.g. bro.org = 7
 		qlen:			count &log;
-		# the number of hieracrchical levels in a domain name (includes '.' as root level)
-		levels: 		count &log;
 		# the top level domain of the query
 		tld:			string &log;
-		# the unique character set of the domain (1-grams)
-		domain_qchar_c:		count &log;
+		# the length of the tld
+		tld_len:		count &log;
+		# the subdomains of the query. the fqdn type specifies a table[count] of strings for this value but Bro cannot log that data type.
+		subs: 			set[string] &log &optional;
+		# the number of subdomains
+		subs_c:			count &log &optional;
+		# the length of all the subdomains
+		subs_len:		count &log &optional;
 		# the domain of the query. this is optional as query of '.com' is possible
 		domain:			string &log &optional;
+		# the length of the domain
+		domain_len: 		count &log &optional;
+		# the unique characters in a the domain
+		domain_uchars:		set[string] &log &optional;
+		# the number of unique characters in the domain
+		domain_uchars_c:	count &log &optional;
 		# the number of unique n-grams in the domain being queried
-		domain_grams_c:		count &log;
+		domain_grams_c:		count &log &optional;
 		# the set of n-grams in the domain name being queried
-		domain_grams:			set[string] &log;
+		domain_grams:		set[string] &log &optional;
 		# the entropy of the domain
-		domain_entropy:		double &log;
+		domain_entropy:		double &log &optional;
 	};
 	
 	# logging event for the nxes module
@@ -52,8 +60,11 @@ export {
 
 	# fully qualified domain name type
 	type fqdn: record {
-	        subs: string &optional;
-	        domain: string &optional;
+		# subdomains following a domain, indexed by their left to right order
+	        subs: table[count] of string &optional;
+		# the domain immediately below the tld
+		domain: string &optional;
+		# the top level domain according to the suffixes table
 	        tld: string;
 	};
 }
@@ -84,12 +95,17 @@ function tldr(s: string): fqdn
                 tld = split1(tld, /\./)[2];
         }
 
-        local subs_domain: string = sub_bytes( s, 0, (|s| - |tld|) );
+	# drop the tld and the period between the tld and the domain from the query string
+        local subs_domain: string = sub( sub_bytes( s, 0, (|s| - |tld|)) , /\.$/, "");
+	# split the string by periods
         local tmp: table[count] of string = split(subs_domain, /\./);
 
         vs$tld = tld;
-        vs$domain = tmp[ |tmp| - 1];
-        vs$subs = sub_bytes( subs_domain, 0, (|subs_domain| - |string_cat(vs$domain, ".")|) );
+	# the domain has the highest key value
+        vs$domain = tmp[ |tmp| ];
+	# delete the domain from the table, all that remains are subdomains
+        delete tmp[ |tmp| ];
+        vs$subs = tmp;
 
         return vs;
 }
@@ -157,21 +173,35 @@ event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count)
 			# if the query wasn't a typo, build an Nxes::Info records and log stuff
 			if (!is_this_a_typo)
 			{
+				# why can't I log table[count] of string types? i demand satisfaction.
+				if (tmp_fqdn?$subs)
+				{
+					local tmp_subs: set[string];
+					for (each in tmp_fqdn$subs)
+					{
+						add tmp_subs[ tmp_fqdn$subs[each] ];
+					}
+				}
 				local domain_uniq_chars: set[string] = gramer(tmp_fqdn$domain, 1);
 				local domain_grams: set[string] = gramer(tmp_fqdn$domain, gram_size);
 				local domain_entropy: entropy_test_result = find_entropy(tmp_fqdn$domain);
-				Log::write(Nxes::LOG, [$uid = c$uid,
+				Log::write(Nxes::LOG, [$ts = c$dns$ts,
+						       $uid = c$uid,
 						       $query = c$dns$query,
 						       $qtype = c$dns$qtype,
 						       $qtype_name = c$dns$qtype_name,
 						       $qlen = |c$dns$query|,
-						       # count the periods in the subdomains, then add 2 (for domain and tld)
-						       $levels = |split(tmp_fqdn$subs, /\./)| + 2,
 						       $tld = tmp_fqdn$tld,
+						       $tld_len = |tmp_fqdn$tld|,
+						       $subs = tmp_subs,
+						       $subs_c = |tmp_fqdn$subs|,
+						       $subs_len = |tmp_fqdn$subs|,
 						       $domain = tmp_fqdn$domain,
-						       $domain_qchar_c = |tmp_fqdn$domain|,
-						       $domain_grams_c = |domain_grams|,
+						       $domain_len = |tmp_fqdn$domain|,
+						       $domain_uchars = domain_uniq_chars,
+						       $domain_uchars_c = |domain_uniq_chars|,
 						       $domain_grams = domain_grams,
+						       $domain_grams_c = |domain_grams|,
 						       $domain_entropy =  domain_entropy$entropy]
 				);
 			}

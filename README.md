@@ -10,8 +10,10 @@ Currently, statistics about queried domains include
 - the length of the query string
 - the number of unique characters in the query string
 - the top level domain of the domain queried for
+- the subdomains of the query
 - ngram analysis of domain (user defined size of gram)
 - randomness of domain being queried
+- some other stuff
 
 Components
 ----------
@@ -32,4 +34,4 @@ Example Usage
 	dig @8.8.8.8 garbage.asdasdasd
 
 or try running Bro against the provided sample pcap with
-	%BRO_PREFIX%/bro -r hacky_query_generators/dns_queries.pcap
+	bro -C -r hacky_query_generators/dns_queries.pcap
