@@ -27,5 +27,9 @@ Example Usage
 	chmod +x ./public_suffix_puller.sh
 	./public_suffix_puller.sh
 	chmod +x ./alexa_top_x_puller.sh
+	./alexa_top_xpuller.sh
 	bro -i eth0 nxes.bro
 	dig @8.8.8.8 garbage.asdasdasd
+
+or try running Bro against the provided sample pcap with
+	%BRO_PREFIX%/bro -r hacky_query_generators/dns_queries.pcap

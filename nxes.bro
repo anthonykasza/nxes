@@ -146,7 +146,7 @@ event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count)
 	                	# can we, the royal I, optimize these lookups with bloom filters?
 	
 				# check that the levenshtein_distance is within an acceptable threshold
-				local n: count = levenshtein_distance(c$dns$query, d);
+				local n: count = levenshtein_distance(string_cat(tmp_fqdn$domain, ".", tmp_fqdn$tld), d);
 				if (n <= misspelling_threshold)
 				{
 					is_this_a_typo = T;

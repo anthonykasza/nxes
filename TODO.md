@@ -6,3 +6,8 @@ TODO
 - rewrite gramer function in core C++
 - introduce bloom filters for faster alexa_top_x lookups
 - build some post processing scripts for working on nxes.log file
+
+- **GET AWAY FROM STRING ADDICTION** 
+	- decide what can be implemented in core
+	- use moar records
+	- make module more _bro_ish
