@@ -35,3 +35,7 @@ Example Usage
 
 or try running Bro against the provided sample pcap with
 	bro -C -r hacky_query_generators/dns_queries.pcap
+
+
+
+Using this module, I recently found that the [Chrome browser](http://code.google.com/p/chromium/issues/detail?id=47262&can=1&q=random%20host%20names&colspec=ID%20Stars%20Pri%20Area%20Feature%20Type%20Status%20Summary%20Modified%20Owner%20Mstone%20OS) tries to determine if your DNS provider lies about NXDomains by generating random requests (this is done either when Chrome starts or when you DHCP request).
