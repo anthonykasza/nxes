@@ -110,32 +110,6 @@ function tldr(s: string): fqdn
         return vs;
 }
 
-# return a set of unique gsize chunks of s 
-# can this be rewritten in C++ core?
-function gramer(s: string, gsize: count): set[string]
-{
-        local index: count = 0;
-        local ssize: count = |s|;
-        local grams: set[string];
-        
-        for (i in s)
-        {
-                if (index + gsize <= ssize)
-                {
-                        local gram_split: string_vec = str_split( s, vector(index, index + gsize) );
-                        if (index == 0)
-                        {
-                                add grams[ gram_split[1] ];
-                        } else
-                        {
-                                add grams[ gram_split[2] ];
-                        }
-                }
-                ++index;
-        }
-        return grams;
-}
-
 event bro_init()
 {
 	Log::create_stream(Nxes::LOG, [$columns=Info, $ev=log_nxes]);
@@ -182,8 +156,8 @@ event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count)
 						add tmp_subs[ tmp_fqdn$subs[each] ];
 					}
 				}
-				local domain_uniq_chars: set[string] = gramer(tmp_fqdn$domain, 1);
-				local domain_grams: set[string] = gramer(tmp_fqdn$domain, gram_size);
+				local domain_uniq_chars: set[string] = str_grammer(tmp_fqdn$domain, 1);
+				local domain_grams: set[string] = str_grammer(tmp_fqdn$domain, gram_size);
 				local domain_entropy: entropy_test_result = find_entropy(tmp_fqdn$domain);
 				Log::write(Nxes::LOG, [$ts = c$dns$ts,
 						       $uid = c$uid,
