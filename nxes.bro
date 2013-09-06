@@ -58,6 +58,9 @@ export {
 	# string metric threshold for determining misspelled domains
 	global misspelling_threshold: count = 3 &redef;
 
+	# hook for Info creation
+	global build_nxes: hook(c: connection, msg: dns_msg);
+
 	# fully qualified domain name type
 	type fqdn: record {
 		# subdomains following a domain, indexed by their left to right order
@@ -69,45 +72,90 @@ export {
 	};
 }
 
-# breaks a domain into a fqdn record
-function tldr(s: string): fqdn
+function tldr(s: string): string
 {
-        local vs: fqdn;
-
         if ( (/\./ !in s) || (s in suffixes) )
-        {
-                vs$tld = s;
-                return vs;
-        }
+                return s;
 
-        local iter = split(s, /\./);
-        local levels: count = |iter|;
-        local tld: string = s;
+        return tldr( split1(s, /\./)[2] );
+}
 
-        for ( i in iter )
-        {
-                if ( (tld in suffixes) || (levels == 1) )
-                {
-                        break;
-                }
-                --levels;
-
-                tld = split1(tld, /\./)[2];
-        }
-
-	# drop the tld and the period between the tld and the domain from the query string
+function qualify_me(s: string): fqdn
+{
+        local return_me: fqdn;
+        local tld: string = tldr(s);
         local subs_domain: string = sub( sub_bytes( s, 0, (|s| - |tld|)) , /\.$/, "");
-	# split the string by periods
         local tmp: table[count] of string = split(subs_domain, /\./);
 
-        vs$tld = tld;
-	# the domain has the highest key value
-        vs$domain = tmp[ |tmp| ];
-	# delete the domain from the table, all that remains are subdomains
+        return_me$tld = tld;
+        return_me$domain = tmp[ |tmp| ];
         delete tmp[ |tmp| ];
-        vs$subs = tmp;
+        return_me$subs = tmp;
+        return return_me;
+}
 
-        return vs;
+hook build_nxes(c: connection, msg: dns_msg) &priority=10
+{
+	if (! c?$dns) break;
+	if (! c$dns?$query) break;
+	if (msg$rcode != 3) break;
+	
+	local tmp_fqdn: fqdn = qualify_me(c$dns$query);
+
+	if (tmp_fqdn$tld in tld_blacklist)
+		break;
+
+	local is_a_typo: bool = F;
+
+	# this should eventually take advantage of bloomfilters
+	for (d in alexa_top_x)
+	{
+		local n: count = levenshtein_distance( string_cat(tmp_fqdn$domain, ".", tmp_fqdn$tld), d );
+		if (n <= misspelling_threshold)
+		{
+			is_a_typo = T;
+			break;
+		}
+	}
+
+	if (is_a_typo)
+		break;
+
+	# this is a hack to turn a table's values into a set
+	# would be nice to have a function [table|vector]_to_set( [values|keys] );
+	if (tmp_fqdn?$subs)
+        {
+                local tmp_subs: set[string];
+                for (each in tmp_fqdn$subs)
+                {
+                	add tmp_subs[ tmp_fqdn$subs[each] ];
+        	}
+	}
+
+	local domain_uniq_chars: set[string] = str_grammer(tmp_fqdn$domain, 1);
+	local domain_grams: set[string] = str_grammer(tmp_fqdn$domain, gram_size);
+
+	Log::write(Nxes::LOG, 
+	[
+		$ts = c$dns$ts,
+        	$uid = c$uid,
+                $query = c$dns$query,
+                $qtype = c$dns$qtype,
+                $qtype_name = c$dns$qtype_name,
+                $qlen = |c$dns$query|,
+                $tld = tmp_fqdn$tld,
+                $tld_len = |tmp_fqdn$tld|,
+                $subs = tmp_subs,
+		$subs_c = |tmp_fqdn$subs|,
+                $subs_len = |tmp_fqdn$subs|,
+                $domain = tmp_fqdn$domain,
+                $domain_len = |tmp_fqdn$domain|,
+                $domain_uchars = domain_uniq_chars,
+                $domain_uchars_c = |domain_uniq_chars|,
+                $domain_grams = domain_grams,
+                $domain_grams_c = |domain_grams|,
+                $domain_entropy =  find_entropy(tmp_fqdn$domain)$entropy
+	]);
 }
 
 event bro_init()
@@ -118,67 +166,10 @@ event bro_init()
 # check to see if a query is interesting enough to log
 event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count) 
 {
-	# cehck to see if the connection contain a DNS query that resulted in an NXDomain response
-	if ( (c?$dns) && (c$dns?$query) && (msg$rcode == 3) ) 
-	{
-		local tmp_fqdn: fqdn = tldr(c$dns$query);
-
-		# check to see if the TLD of the domain is interesting or not
-		if (tmp_fqdn$tld !in tld_blacklist)
-		{
-			local is_this_a_typo: bool = F;
-		
-			# is the query a typo of a legitimate popular domain?
-			for (d in alexa_top_x)
-			{
-		                # levenshtein_distance will be called once for each string in alex_top_x
-	        	       	# this function has potential to make this module run slow (so don't make alexa_top_x too big)
-	                	# can we, the royal I, optimize these lookups with bloom filters?
-	
-				# check that the levenshtein_distance is within an acceptable threshold
-				local n: count = levenshtein_distance(string_cat(tmp_fqdn$domain, ".", tmp_fqdn$tld), d);
-				if (n <= misspelling_threshold)
-				{
-					is_this_a_typo = T;
-					break;
-				}
-			}
-	
-			# if the query wasn't a typo, build an Nxes::Info records and log stuff
-			if (!is_this_a_typo)
-			{
-				# why can't I log table[count] of string types? i demand satisfaction.
-				if (tmp_fqdn?$subs)
-				{
-					local tmp_subs: set[string];
-					for (each in tmp_fqdn$subs)
-					{
-						add tmp_subs[ tmp_fqdn$subs[each] ];
-					}
-				}
-				local domain_uniq_chars: set[string] = str_grammer(tmp_fqdn$domain, 1);
-				local domain_grams: set[string] = str_grammer(tmp_fqdn$domain, gram_size);
-				local domain_entropy: entropy_test_result = find_entropy(tmp_fqdn$domain);
-				Log::write(Nxes::LOG, [$ts = c$dns$ts,
-						       $uid = c$uid,
-						       $query = c$dns$query,
-						       $qtype = c$dns$qtype,
-						       $qtype_name = c$dns$qtype_name,
-						       $qlen = |c$dns$query|,
-						       $tld = tmp_fqdn$tld,
-						       $tld_len = |tmp_fqdn$tld|,
-						       $subs = tmp_subs,
-						       $subs_c = |tmp_fqdn$subs|,
-						       $subs_len = |tmp_fqdn$subs|,
-						       $domain = tmp_fqdn$domain,
-						       $domain_len = |tmp_fqdn$domain|,
-						       $domain_uchars = domain_uniq_chars,
-						       $domain_uchars_c = |domain_uniq_chars|,
-						       $domain_grams = domain_grams,
-						       $domain_grams_c = |domain_grams|,
-						       $domain_entropy =  domain_entropy$entropy]
-				);
-			}
-		}
-	}
+	# use this hook for metrics on number of NXDomains?
+	#if ( hook build_nxes(c, msg) )
+	#{
+	#	print "interesting NXDomain logged";
+	#}
+	hook build_nxes(c, msg);
 }
