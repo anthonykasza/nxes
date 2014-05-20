@@ -11,40 +11,24 @@ export {
 	redef enum Log::ID += { LOG };
 
 	type Info: record {
-        	# the epoch from the original DNS query
-		ts: 			time &log;
-	        # the Bro unique connection ID string
-		uid:       		string &log;
-		# the domain being queried
-	        query:       		string &log;
+		#the query
+		query:			string &log;
 		# the query type in decimal form
 		qtype: 			count &log;
-		# the query type's name (not decimal value) e.g. A, AAAA, NS, SOA, TXT, etc.
-		qtype_name:		string &log;
 		# the length of the query e.g. bro.org = 7
 		qlen:			count &log;
-		# the top level domain of the query
-		tld:			string &log;
 		# the length of the tld
 		tld_len:		count &log;
-		# the subdomains of the query. the fqdn type specifies a table[count] of strings for this value but Bro cannot log that data type.
-		subs: 			set[string] &log &optional;
 		# the number of subdomains
 		subs_c:			count &log &optional;
 		# the length of all the subdomains
 		subs_len:		count &log &optional;
-		# the domain of the query. this is optional as query of '.com' is possible
-		domain:			string &log &optional;
 		# the length of the domain
 		domain_len: 		count &log &optional;
-		# the unique characters in a the domain
-		domain_uchars:		set[string] &log &optional;
 		# the number of unique characters in the domain
 		domain_uchars_c:	count &log &optional;
 		# the number of unique n-grams in the domain being queried
 		domain_grams_c:		count &log &optional;
-		# the set of n-grams in the domain name being queried
-		domain_grams:		set[string] &log &optional;
 		# the entropy of the domain
 		domain_entropy:		double &log &optional;
 	};
@@ -157,22 +141,14 @@ hook build_nxes(c: connection, msg: dns_msg) &priority=10
 
 	Log::write(Nxes::LOG, 
 	[
-		$ts = c$dns$ts,
-        	$uid = c$uid,
-                $query = c$dns$query,
+		$query = c$dns$query,
                 $qtype = c$dns$qtype,
-                $qtype_name = c$dns$qtype_name,
                 $qlen = |c$dns$query|,
-                $tld = tmp_fqdn$tld,
                 $tld_len = |tmp_fqdn$tld|,
-                $subs = tmp_subs,
 		$subs_c = |tmp_fqdn$subs|,
                 $subs_len = |tmp_fqdn$subs|,
-                $domain = tmp_fqdn$domain,
                 $domain_len = |tmp_fqdn$domain|,
-                $domain_uchars = domain_uniq_chars,
                 $domain_uchars_c = |domain_uniq_chars|,
-                $domain_grams = domain_grams,
                 $domain_grams_c = |domain_grams|,
                 $domain_entropy =  find_entropy(tmp_fqdn$domain)$entropy
 	]);
