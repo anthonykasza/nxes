@@ -1,9 +1,9 @@
 # This module takes a closer look at NXDomain responses
 
 # be sure to run publix_suffix_puller.sh and alexa_top_x.sh before running this script so that the files being loaded below exist
-@load public_suffix
-@load alexa_top_x
-@load tld_blacklist
+@load ./public_suffix
+@load ./alexa_top_x
+@load ./tld_blacklist
 
 module Nxes;
 
