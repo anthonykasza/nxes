@@ -26,9 +26,9 @@ export {
 		# the length of the domain
 		domain_len: 		count &log &optional;
 		# the number of unique characters in the domain
-		domain_uchars_c:	count &log &optional;
+		domain_uchars:		set[string] &log &optional;
 		# the number of unique n-grams in the domain being queried
-		domain_grams_c:		count &log &optional;
+		domain_grams:		set[string] &log &optional;
 		# the entropy of the domain
 		domain_entropy:		double &log &optional;
 	};
@@ -72,7 +72,7 @@ function str_grammer(s: string, n: count, i: count &default=0, ss: string_set &d
 	if ( n + i > |s| )
 		return ss;
 
-	add ss[s[i:i+n-1]];
+	add ss[s[i:i+n]];
 	return str_grammer(s, n, ++i, ss);
 }
 
@@ -111,7 +111,6 @@ hook build_nxes(c: connection, msg: dns_msg) &priority=10
 
 	local is_a_typo: bool = F;
 
-	# this should eventually take advantage of bloomfilters
 	for (d in alexa_top_x)
 	{
 		local n: count = levenshtein_distance( string_cat(tmp_fqdn$domain, ".", tmp_fqdn$tld), d );
@@ -148,8 +147,8 @@ hook build_nxes(c: connection, msg: dns_msg) &priority=10
 		$subs_c = |tmp_fqdn$subs|,
                 $subs_len = |tmp_fqdn$subs|,
                 $domain_len = |tmp_fqdn$domain|,
-                $domain_uchars_c = |domain_uniq_chars|,
-                $domain_grams_c = |domain_grams|,
+                $domain_uchars = domain_uniq_chars,
+                $domain_grams = domain_grams,
                 $domain_entropy =  find_entropy(tmp_fqdn$domain)$entropy
 	]);
 }
@@ -163,9 +162,9 @@ event bro_init()
 event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count) 
 {
 	# use this hook for metrics on number of NXDomains?
-	#if ( hook build_nxes(c, msg) )
-	#{
-	#	print "interesting NXDomain logged";
-	#}
+#	if ( hook build_nxes(c, msg) )
+#	{
+#		print "interesting NXDomain logged";
+#	}
 	hook build_nxes(c, msg);
 }
